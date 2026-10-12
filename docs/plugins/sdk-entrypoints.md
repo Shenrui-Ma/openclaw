@@ -16,6 +16,16 @@ All plugin APIs are [experimental](/plugins/sdk-overview#api-stability),
 including these entry helpers. Pin and test the OpenClaw host versions your
 plugin supports.
 
+Gateway adapters use the existing `core` or `gateway-runtime`
+`GatewayRequestHandlerOptions.context.githubPublicationService` contract for
+GitHub publication. Prepare its required capabilities with
+`prepareGitHubPublicationRequesterV2` or `preparePersonalGitHubSessionActionV2`
+from `gateway-runtime`, using admitted handler options, and release them after
+the operation settles. The host's worker and source-fence modules remain private.
+Migrate wrappers and lifecycle calls using the
+[GitHub publication method mapping](/plugins/sdk-migration/how-to-migrate#await-github-publication-operations),
+without adding imports from Gateway internals.
+
 <Tip>
   **Looking for a walkthrough?** See [Tool Plugins](/plugins/tool-plugins),
   [Channel Plugins](/plugins/sdk-channel-plugins), or
@@ -51,6 +61,14 @@ OpenClaw classifies loaded plugins by their registration behavior:
 | **non-capability**    | Tools/commands/services but no capabilities        |
 
 Use `openclaw plugins inspect <id>` to see a plugin's shape.
+
+Worker backends can use `stageOpenClawAgentDatabaseSchemaExtension` from
+`openclaw/plugin-sdk/sqlite-worker-runtime` before known derived-table DDL inside
+a managed transaction. Use it only when the operation preserves agent ownership
+metadata and canonical agent tables, indexes, and triggers. The committed receipt
+preserves those existing contracts; unclassified DDL and migrations still require
+their normal schema admission. Private databases without agent admission are
+unaffected.
 
 ## Related
 
@@ -316,6 +334,15 @@ for already prepared data. `session-transcript-runtime` provides
 synchronous and opaque transaction callback forms remain deprecated until the
 next Plugin SDK major. See [session entry migration](/plugins/sdk-migration/how-to-migrate#prepare-session-entry-changes)
 and [transcript migration](/plugins/sdk-migration/how-to-migrate#await-locked-transcript-preparation).
+
+For ordinary session preparation, await `getSessionEntryAsync`,
+`readSessionUpdatedAtAsync`, `getConversationSessionAsync`, or
+`readAmbientTranscriptWatermarkAsync` from `session-store-runtime`. Native command
+preparation uses `resolveStoredModelOverrideAsync` and
+`resolveCommandArgMenuAsync` from `command-auth-native`; the menu helper is also
+available from `native-command-registry`. Their synchronous compatibility APIs
+remain deprecated until the next Plugin SDK major. See
+[session and command preparation](/plugins/sdk-migration#session-and-command-preparation).
 
 ## Stateful CLI commands
 
