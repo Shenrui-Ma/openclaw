@@ -74,10 +74,10 @@ function mockAuthoredConfig(authoredConfig: OpenClawConfig) {
   });
 }
 
-async function patch(raw: unknown) {
+async function patch(raw: unknown, baseHash: string | null = "base-hash") {
   const harness = createConfigHandlerHarness({
     method: "config.patch",
-    params: { baseHash: "base-hash", raw: JSON.stringify(raw) },
+    params: { baseHash: baseHash ?? undefined, raw: JSON.stringify(raw) },
   });
   await withEnvAsync(env, async () =>
     expectDefined(configHandlers["config.patch"], "config.patch handler")(harness.options),
@@ -136,11 +136,31 @@ describe("config.patch reference intent", () => {
       browser: { executablePath: env.CONFIG_PATCH_VALUE },
       messages: { responsePrefix: reference },
     };
-    expect(mocks.validate).toHaveBeenNthCalledWith(1, resolvedConfig);
-    expect(mocks.validate).toHaveBeenNthCalledWith(2, resolvedConfig);
+    expect(mocks.validate).toHaveBeenNthCalledWith(1, resolvedConfig, {
+      pluginMetadataSnapshot: undefined,
+    });
+    expect(mocks.validate).toHaveBeenNthCalledWith(2, resolvedConfig, {
+      pluginMetadataSnapshot: undefined,
+    });
     expect(mocks.prepareSecrets).toHaveBeenCalledWith(
       expect.objectContaining({ config: resolvedConfig }),
     );
+  });
+
+  it("requires a base hash when activating a reference outside ui.prefs", async () => {
+    mockAuthoredConfig({ browser: { executablePath: escaped } });
+
+    const { respond } = await patch({ browser: { executablePath: reference } }, null);
+
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({
+        code: "INVALID_REQUEST",
+        message: expect.stringContaining("config base hash required for browser.executablePath"),
+      }),
+    );
+    expect(mocks.commit).not.toHaveBeenCalled();
   });
 
   it("maps an ID-keyed patch to its destination without activating the same reference on another row", async () => {

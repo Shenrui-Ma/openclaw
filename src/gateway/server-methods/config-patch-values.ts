@@ -1,4 +1,3 @@
-import { isDeepStrictEqual } from "node:util";
 import { scanEnvTemplateTokens } from "../../config/env-substitution.js";
 import type { readConfigFileSnapshotForWrite } from "../../config/io.js";
 import { coerceConfig } from "../../config/io.read-helpers.js";
@@ -8,8 +7,7 @@ import { normalizeSubmittedConfigModelRefs } from "../../config/model-input-norm
 import { restoreRedactedValues } from "../../config/redact-snapshot.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { visitConfigValueTree } from "../../config/value-tree.js";
-import { isPlainObject } from "../../infra/plain-object.js";
-import { diffConfigPaths } from "../config-diff.js";
+import { diffConfigLeafPaths } from "./config-patch-intent.js";
 
 type ConfigWriteSnapshot = Awaited<ReturnType<typeof readConfigFileSnapshotForWrite>>;
 
@@ -84,19 +82,4 @@ export function prepareGatewayConfigPatchValues(
       ? { ...writeOptions, explicitSetPaths: patch.referencePaths }
       : writeOptions,
   };
-}
-
-function diffConfigLeafPaths(prev: unknown, next: unknown, prefix = ""): string[] {
-  if (isPlainObject(prev) || isPlainObject(next)) {
-    const prevRecord = isPlainObject(prev) ? prev : {};
-    const nextRecord = isPlainObject(next) ? next : {};
-    const keys = [...new Set([...Object.keys(prevRecord), ...Object.keys(nextRecord)])];
-    if (keys.length === 0) {
-      return isDeepStrictEqual(prev, next) ? [] : [prefix || "<root>"];
-    }
-    return keys.flatMap((key) =>
-      diffConfigLeafPaths(prevRecord[key], nextRecord[key], prefix ? `${prefix}.${key}` : key),
-    );
-  }
-  return diffConfigPaths(prev, next, prefix);
 }

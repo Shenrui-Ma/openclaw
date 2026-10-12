@@ -69,7 +69,7 @@ function openPluginStateDatabase(
   }
 }
 
-function isMissingPluginStateTableError(error: unknown): boolean {
+export function isMissingPluginStateTableError(error: unknown): boolean {
   return (
     error instanceof Error &&
     hasErrnoCode(error, "ERR_SQLITE_ERROR") &&
@@ -124,5 +124,7 @@ export function runWriteTransaction<T>(
   if (!isOpenClawStateDatabaseOpen(resolveOpenClawStateSqlitePath(options.env ?? process.env))) {
     openPluginStateDatabase(operation, options);
   }
-  return runOpenClawStateWriteTransaction(write, options);
+  return runOpenClawStateWriteTransaction(write, options, {
+    operationLabel: `pluginState.${operation}`,
+  });
 }
