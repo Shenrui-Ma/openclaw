@@ -47,6 +47,7 @@ import { drainNodeWorkerWorkspace } from "./node-worker-workspace-drain.js";
 import type { NodeWorkspaceTransferService } from "./node-workspace-transfer-service.js";
 import type { WorkerSessionTurnClaim } from "./placement-record.js";
 import { readWorkerProjectPreparation } from "./preparation-identity.js";
+import { WorkerEnvironmentInventoryClosedError } from "./store-errors.js";
 import type { WorkerEnvironmentRecord } from "./store.js";
 import {
   joinWorkerTunnelStops,
@@ -379,16 +380,19 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
         if (entry.executionMode !== "worker-turn") {
           throw new Error("remote-exec environments do not launch embedded worker turns");
         }
-        const plan = request.plan;
-        const claim = request.turnClaim;
-        const isDispatchAuthorized = () =>
-          isEnvironmentOwner(entry) &&
-          claim.owner.kind === "worker" &&
-          claim.owner.environmentId === entry.environmentId &&
-          claim.owner.ownerEpoch === entry.ownerEpoch &&
-          claim.sessionId === plan.admission.sessionId &&
-          claim.runId === plan.assignment.runId &&
-          options.validateWorkerTurn(claim);
+        const { plan, turnClaim: claim } = request;
+        const isDispatchAuthorized = Object.assign(() => {
+          request.assertCurrent?.();
+          return (
+            isEnvironmentOwner(entry) &&
+            claim.owner.kind === "worker" &&
+            claim.owner.environmentId === entry.environmentId &&
+            claim.owner.ownerEpoch === entry.ownerEpoch &&
+            claim.sessionId === plan.admission.sessionId &&
+            claim.runId === plan.assignment.runId &&
+            options.validateWorkerTurn(claim)
+          );
+        }, request.assertCurrent);
         const operation = options.launchNodeWorker({
           deviceId: entry.deviceId,
           input: buildLaunchInput(plan, claim),
@@ -706,20 +710,27 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
     },
     stop,
     async stopAll(): Promise<void> {
-      const live = new Set([
-        ...entries.keys(),
-        ...[...retiredEntries].map((entry) => entry.environmentId),
-      ]);
+      const live = new Set(
+        [...entries.values(), ...retiredEntries].map((entry) => entry.environmentId),
+      );
       const tunnelStops = joinWorkerTunnelStops([
         ...[...live].map((environmentId) => stop(environmentId)),
-        // A revoked inventory reports its failure without stranding live tunnels.
-        (async () =>
-          joinWorkerTunnelStops(
-            options
-              .listEnvironments()
-              .filter((record) => record.nodeDeviceId && !live.has(record.environmentId))
-              .map((record) => stop(record.environmentId)),
-          ))(),
+        // Retained owners drain above even after their inventory retires.
+        (async () => {
+          try {
+            // Return without awaiting so teardown failures stay outside this lookup catch.
+            return joinWorkerTunnelStops(
+              options
+                .listEnvironments()
+                .filter((record) => record.nodeDeviceId && !live.has(record.environmentId))
+                .map((record) => stop(record.environmentId)),
+            );
+          } catch (error) {
+            if (!(error instanceof WorkerEnvironmentInventoryClosedError)) {
+              throw error;
+            }
+          }
+        })(),
       ]);
       // Shared transfer state outlives every tunnel, even when a sibling's cleanup fails.
       const closeTransfers = () => options.workspaceTransfer.closeAll();
@@ -727,11 +738,10 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
     },
     status(environmentId: string): WorkerTunnelStatus {
       const entry = entries.get(environmentId);
-      return entry && !entry.abortController.signal.aborted
-        ? entry.handle
-          ? "connected"
-          : "connecting"
-        : "stopped";
+      if (!entry || entry.abortController.signal.aborted) {
+        return "stopped";
+      }
+      return entry.handle ? "connected" : "connecting";
     },
   };
 }
