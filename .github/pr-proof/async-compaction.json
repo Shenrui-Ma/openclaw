@@ -1,84 +1,102 @@
 {
-  "baseline_sha": "14fd53f8f69b2272c758e46b116605000475512f",
-  "probe_sha256": "47b63bf08e8fc651afabfcd61b8403e36ce25e6c97e7963172ce866335468b45",
-  "keepRecentTokens": "default 20000 retained-history budget",
-  "pipeline": "Registered async tool via AgentSession.prompt -> in-memory SessionManager branch -> session.compact with real safeguard -> next prompt through production replay sanitizer -> registered provider request",
-  "model_boundary": "Controlled provider stream and registered local summarizer; no public provider or account used",
+  "baseline_sha": "6476fe2cf03fa8301f96aff749656501e127bd5c",
+  "tested_pr_head": "05e964adf0cdd4eda601554666b885e7c8d8d740",
+  "baseline_method": "Exact pre-fix compaction owner in the same runtime, rebuilt before running; candidate source restored and rebuilt afterward.",
+  "entry_point": "pnpm openclaw gateway run; pnpm openclaw agent; pnpm openclaw gateway call sessions.get; pnpm openclaw sessions compact",
+  "pipeline": "Configured stdio MCP async tool -> Gateway-owned SQLite session -> local summary compaction -> next Responses HTTP request received by a local TLS proxy",
+  "settings": {
+    "keepRecentTokens": 20000,
+    "recentTurnsPreserve": 0,
+    "codeMode": false,
+    "responsesCompactEndpoint": false
+  },
+  "external_fixtures": "Scripted Responses SSE and MCP tool data. No remote model, account credentials or external service used. The native async protocol route uses a test-only proxy and CA.",
+  "ordering_barrier": "Release the late MCP result only after sessions.get returns the persisted terminal assistant text; for the early control, release terminal text only after sessions.get returns the persisted tool result.",
+  "tool_result_marker": "release-artifact-6f29.tar.zst",
   "records": [
     {
       "variant": "baseline",
-      "timing": "early",
-      "keepRecentTokens": 20000,
-      "resultCharacters": 75630,
-      "resultIndex": 4,
-      "terminalIndex": 5,
-      "summaryContainsResult": true,
-      "retainedContainsResult": false,
-      "nextRequestContainsResult": true,
-      "lookupExecutions": 1,
-      "agentError": null
+      "timing": "late",
+      "result_index": 5,
+      "terminal_index": 4,
+      "tool_calls": 1,
+      "compacted": true,
+      "summary_input_has_result": false,
+      "next_request_has_result": false,
+      "request_counts": {
+        "prime": 1,
+        "lookup": 2,
+        "summary": 2,
+        "continue": 1
+      },
+      "errors": [],
+      "previous_response_id": null,
+      "next_request_result_output_count": 0
     },
     {
       "variant": "baseline",
+      "timing": "early",
+      "result_index": 4,
+      "terminal_index": 5,
+      "tool_calls": 1,
+      "compacted": true,
+      "summary_input_has_result": true,
+      "next_request_has_result": true,
+      "request_counts": {
+        "prime": 1,
+        "lookup": 2,
+        "summary": 2,
+        "continue": 1
+      },
+      "errors": [],
+      "previous_response_id": null,
+      "next_request_result_output_count": 0
+    },
+    {
+      "variant": "patched",
       "timing": "late",
-      "keepRecentTokens": 20000,
-      "resultCharacters": 75630,
-      "resultIndex": 5,
-      "terminalIndex": 4,
-      "summaryContainsResult": false,
-      "retainedContainsResult": true,
-      "nextRequestContainsResult": false,
-      "lookupExecutions": 1,
-      "agentError": null
+      "result_index": 5,
+      "terminal_index": 4,
+      "tool_calls": 1,
+      "compacted": true,
+      "summary_input_has_result": false,
+      "next_request_has_result": true,
+      "request_counts": {
+        "prime": 1,
+        "lookup": 2,
+        "summary": 2,
+        "continue": 1
+      },
+      "errors": [],
+      "previous_response_id": null,
+      "next_request_result_output_count": 1,
+      "next_request_result_excerpt": "release-artifact-6f29.tar.zst\nmetadata metadata metadata metadata metadata metadata metadata metadata metadata metadata "
     },
     {
       "variant": "patched",
       "timing": "early",
-      "keepRecentTokens": 20000,
-      "resultCharacters": 75630,
-      "resultIndex": 4,
-      "terminalIndex": 5,
-      "summaryContainsResult": true,
-      "retainedContainsResult": false,
-      "nextRequestContainsResult": true,
-      "lookupExecutions": 1,
-      "agentError": null
-    },
-    {
-      "variant": "patched",
-      "timing": "late",
-      "keepRecentTokens": 20000,
-      "resultCharacters": 75630,
-      "resultIndex": 5,
-      "terminalIndex": 4,
-      "summaryContainsResult": false,
-      "retainedContainsResult": true,
-      "nextRequestContainsResult": true,
-      "lookupExecutions": 1,
-      "agentError": null
+      "result_index": 4,
+      "terminal_index": 5,
+      "tool_calls": 1,
+      "compacted": true,
+      "summary_input_has_result": true,
+      "next_request_has_result": true,
+      "request_counts": {
+        "prime": 1,
+        "lookup": 2,
+        "summary": 2,
+        "continue": 1
+      },
+      "errors": [],
+      "previous_response_id": null,
+      "next_request_result_output_count": 0
     }
   ],
-  "scope": "Model context preservation; no claim of real-model decision quality, public transport, or newly tested SQLite crash recovery",
+  "cleanup": "Both Gateways logged clean shutdown after task-owned SIGTERM; the supervisor finished remaining command-wrapper cleanup.",
+  "limits": "Proves persisted message ordering, local compaction and next-request content. Does not evaluate remote model decisions, native server compaction or crash recovery.",
+  "proof_script_sha256": "5cb2c3de9906bb320c5db2f3baf499f934457e1bd13ed1bc70500efe7da691e8",
   "tested_source_sha256": {
-    "packages/agent-core/src/harness/compaction/compaction.ts": "bcf12fcb390709068cf1e17219d9ef0c168a9a7a6a9103c3819d036bc30ff316",
-    "packages/agent-core/src/harness/compaction/compaction-cut-point.ts": "8f651ccd9c49e9fded7bb518a66933824390161e237860521bc64e1721c6e3f9",
-    "packages/agent-core/src/harness/compaction/compaction-cut-point.test.ts": "992cac0899b462bc95ee3a7843cf8d2c6396daa1e73c3023a665406521343fee",
-    "config/max-lines-baseline.txt": "31286da1ff0ea251f2400f50f389a8a3c4e9d15c304b87cb62d8dcfb5a5c6aa4"
-  },
-  "validation": {
-    "focused_baseline": {
-      "failed": 7,
-      "passed": 5
-    },
-    "focused_patched": {
-      "passed": 12
-    },
-    "adjacent_patched": {
-      "files": 18,
-      "passed": 353,
-      "includes_focused": true
-    },
-    "changed_file_checks": "passed",
-    "hosted_ci": "not run before publication"
+    "packages/agent-core/src/harness/compaction/compaction.ts": "092901db2da042a277cf4717355d03bb438c47dbf5155d8d0f75eeffa7b91e54",
+    "packages/agent-core/src/harness/compaction/compaction-cut-point.ts": "30a37bff59ee2d79e5e7f9e4054de746a90c05e27ef137d50c30bd5c951d4de4"
   }
 }
