@@ -30,11 +30,15 @@ vi.mock("../../config/validation.js", async () => ({
   validateConfigObjectWithPlugins: mocks.validate,
 }));
 
-vi.mock("../../secrets/runtime.js", () => ({
+vi.mock("../../secrets/runtime.js", async () => ({
+  ...(await vi.importActual<typeof import("../../secrets/runtime.js")>("../../secrets/runtime.js")),
   prepareSecretsRuntimeSnapshot: mocks.prepareSecrets,
 }));
 
-vi.mock("../../config/runtime-schema.js", () => ({
+vi.mock("../../config/runtime-schema.js", async () => ({
+  ...(await vi.importActual<typeof import("../../config/runtime-schema.js")>(
+    "../../config/runtime-schema.js",
+  )),
   loadGatewayRuntimeConfigSchema: () => ({
     schema: { type: "object" },
     uiHints: { "gateway.auth.token": { sensitive: true } },
