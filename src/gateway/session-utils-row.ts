@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import {
   asNonNegativeFiniteNumber,
   asPositiveFiniteNumber,
@@ -45,6 +44,7 @@ import { resolveActiveFallbackState } from "../status/fallback-notice-state.js";
 import { readSessionFallbackModel } from "../status/session-fallback-model.js";
 import { projectSessionDeliveryFields } from "../utils/delivery-context.shared.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../utils/message-channel-constants.js";
+import { channelAvatarRevision } from "./channel-avatar-reference.js";
 import { buildControlUiChannelAvatarUrl } from "./control-ui-contract.js";
 import { normalizeControlUiBasePath } from "./control-ui-shared.js";
 import { sessionHasAutomation } from "./session-automation-index.js";
@@ -81,6 +81,7 @@ import {
 } from "./session-utils-display.js";
 import {
   buildSessionListRowMetadataContext,
+  projectSessionRowChildLinks,
   resolveTranscriptUsageFallbacks,
 } from "./session-utils-projection.js";
 import { parseGroupKey } from "./session-utils-store.js";
@@ -371,11 +372,6 @@ export function resolveGatewaySessionActiveModel(params: {
     : undefined;
 }
 
-/** Opaque cache-busting revision for the channel-avatar route; never leaks the reference. */
-function channelAvatarRevision(reference: string): string {
-  return createHash("sha256").update(reference).digest("base64url").slice(0, 12);
-}
-
 /** Profile publications invalidate display facts independently of stored session metadata. */
 function projectSessionRowProfiles(
   input: Pick<
@@ -423,26 +419,6 @@ export function refreshSessionRowProfiles(materialized: ReturnType<typeof materi
   Object.assign(materialized.row, projectSessionRowProfiles(materialized.source));
 }
 
-/** Child presentation needs live ownership and sharing facts, never the child's stored payload. */
-export function projectSessionRowChildLinks(links: readonly SessionChildLink[] | undefined) {
-  return links?.map(({ key, entry }) => ({
-    key,
-    entry: {
-      sessionId: entry.sessionId,
-      updatedAt: entry.updatedAt,
-      archivedAt: entry.archivedAt,
-      status: entry.status,
-      startedAt: entry.startedAt,
-      endedAt: entry.endedAt,
-      spawnedBy: entry.spawnedBy,
-      parentSessionKey: entry.parentSessionKey,
-      createdActor: entry.createdActor,
-      visibility: entry.visibility,
-      incognito: entry.incognito,
-    },
-  }));
-}
-
 export function materializeSessionRow(input: ReturnType<typeof readSessionRowInputs>["inputs"]) {
   const { cfg, key, entry } = input;
   const observerDigest =
@@ -461,7 +437,6 @@ export function materializeSessionRow(input: ReturnType<typeof readSessionRowInp
   const pinnable = isPinnableSessionEntry(key, entry);
   const pinnedAt = pinnable ? entry?.pinnedAt : undefined;
 
-  // Reserve temporal fields in wire order; presentation fills a fresh copy.
   const row: GatewaySessionRow = {
     key,
     sessionModelRevision: sessionModelRevision(entry),
@@ -469,8 +444,6 @@ export function materializeSessionRow(input: ReturnType<typeof readSessionRowInp
     ...(input.includeSwarmSummary ? { swarm: input.swarm } : {}),
     visibility: entry ? (entry.visibility ?? "shared") : undefined,
     incognito: entry?.incognito,
-    spawnedBy: undefined,
-    controlOwnerSessionKey: undefined,
     swarmGroupId: entry?.swarmGroupId,
     spawnedWorkspaceDir: entry?.spawnedWorkspaceDir,
     spawnedCwd: entry?.spawnedCwd,
@@ -535,7 +508,6 @@ export function materializeSessionRow(input: ReturnType<typeof readSessionRowInp
     unread: deriveSessionUnread(entry),
     lastReadAt: entry?.lastReadAt,
     markedUnreadAt: entry?.markedUnreadAt,
-    agentStatus: undefined,
     observerDigest: observerDigest
       ? {
           ...(observerDigest.agentId ? { agentId: observerDigest.agentId } : {}),
@@ -572,24 +544,13 @@ export function materializeSessionRow(input: ReturnType<typeof readSessionRowInp
     sendPolicy: entry?.sendPolicy,
     inputTokens: entry?.inputTokens,
     outputTokens: entry?.outputTokens,
-    totalTokens: undefined,
-    totalTokensFresh: undefined,
-    goal: undefined,
-    estimatedCostUsd: undefined,
-    status: undefined,
-    subagentRunState: undefined,
-    hasActiveSubagentRun: undefined,
-    startedAt: undefined,
-    endedAt: undefined,
-    runtimeMs: undefined,
-    lastRunError: undefined,
+    usageReport: entry?.usageReport,
     providerReview: projectSessionProviderReview(entry, key),
     lastRunId: entry?.lastRunId,
     hasAutomation: input.hasAutomation,
     // Navigation lineage is persisted; runtime control is exposed separately above.
     parentSessionKey: entry?.parentSessionKey,
     parentSessionId: entry?.parentSessionId,
-    childSessions: undefined,
     responseUsage: entry?.responseUsage,
     effectiveResponseUsage: resolveEffectiveResponseUsage(
       entry?.responseUsage,
@@ -604,8 +565,6 @@ export function materializeSessionRow(input: ReturnType<typeof readSessionRowInp
     }).mode,
     modelProvider: input.rowModelIdentity.provider,
     model: input.rowModelIdentity.model,
-    activeModelProvider: undefined,
-    activeModel: undefined,
     modelOverrideSource:
       input.selectedModel.storedOverrideSource === "parent"
         ? "inherited"
@@ -627,6 +586,12 @@ export function materializeSessionRow(input: ReturnType<typeof readSessionRowInp
     lastThreadId: deliveryFields.lastThreadId,
     pluginExtensions: input.pluginExtensions.length > 0 ? input.pluginExtensions : undefined,
   };
+  // JSON omits undefined fields; keep the resident projection equally sparse.
+  for (const field in row) {
+    if (Reflect.get(row, field) === undefined) {
+      Reflect.deleteProperty(row, field);
+    }
+  }
   return {
     row,
     source: {
@@ -642,8 +607,8 @@ export function materializeSessionRow(input: ReturnType<typeof readSessionRowInp
       identityProjection: input.identityProjection,
       configuredAgentIds: input.configuredAgentIds,
       lightweight: input.lightweight,
-      freshSessionTotalTokens: input.freshSessionTotalTokens,
       usageByFallbackModel: input.usageByFallbackModel,
+      freshSessionTotalTokens: input.freshSessionTotalTokens,
       estimatedCostUsd: input.estimatedCostUsd,
       subagentRunInputs: input.subagentRunInputs,
       lastMessagePreview: input.lastMessagePreview,
@@ -677,6 +642,7 @@ export function presentSessionRow(
   });
   Object.assign(row, fields);
   const usage = source.usageByFallbackModel?.get(subagentRun?.model);
+  row.usageReport ??= usage?.usageReport;
   row.totalTokens = freshSessionTotalTokens ?? asNonNegativeFiniteNumber(usage?.totalTokens);
   row.totalTokensFresh =
     freshSessionTotalTokens !== undefined ||

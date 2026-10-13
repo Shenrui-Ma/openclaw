@@ -79,7 +79,14 @@ The controller switches the release pointer only after migration succeeds,
 starts the candidate, and performs its existing readiness and session-continuity
 acceptance. Retain the original pre-cutover session witness.
 
-On failure, stop the owned candidate before invoking the same candidate's
+When recovering a retained native-update journal, first accept a selected,
+live migrated candidate through generation-bound full deployment verification.
+Record its verified marker and retire the exact journal without draining,
+restarting, or restoring; retain the native backup. This includes a selected
+candidate in `ROLLBACK_FAILED`. Only an absent or unverifiable candidate falls
+back to the existing compatibility-checked rollback.
+
+On activation failure, stop the owned candidate before invoking the same candidate's
 `update restore` with the original backup root. Restore the predecessor pointer
 and verify the predecessor only after native restoration succeeds. Retain the
 journal, backups, and displaced candidate state if recovery fails; never start
@@ -91,6 +98,19 @@ For a concrete migration or recovery issue, consult
 [backup semantics](https://docs.openclaw.ai/cli/backup).
 
 ## Verify and recover
+
+The controller's existing `OPENCLAW_TEAM_VERIFICATION_BUDGET` defaults to ten
+minutes for each started candidate or restored predecessor. Its shared
+acceptance owner waits for native critical startup and model-agent admission,
+sampled main-thread responsiveness, and an exact-generation RPC response before
+the marker. Responsive CPU/utilization load needs no operator waiver. Deferred
+background recovery and other agents' pending inspections can continue while
+acceptance runs; the model agent's own admission and critical startup still wait.
+Typed dispatch timeouts reconcile the identical request and idempotency key only
+after fresh readiness checks; readiness and reconciliation consume the same
+absolute deadline. The 60-second transport timeout does not shorten this startup
+window. Wrong identity, corruption, protocol/authentication failures, incorrect
+marker receipts, and deadline expiry remain failures with evidence retained.
 
 Use the exact invocation's native terminal acceptance receipt as the authoritative outcome. The native owner performs the serving/build SHA, process generation, RPC, health/startup/readiness, configured-channel, protected-policy/identity, original session-witness, and journal-resolution checks recorded there. Reuse its validation and real model-marker receipt; do not repeat health probes, channel/session/policy audits, migration checks, or marker turns as agent-side acceptance. Preserve the intended state of the configured sole cadence without adding another validation loop. Read the native result, not just the observer process status: observer exit `0` can wrap native exit `75`/deferred and is not accepted deployment. Supervisor success, a skip, healthy old code, rollback, or same-release recovery is not a new deployment.
 
