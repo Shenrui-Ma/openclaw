@@ -179,7 +179,7 @@ describe("memory source inspection extra-path diagnostics", () => {
         ...(canonicalMemory ? [] : ["no eligible memory files found"]),
         expect.stringContaining('extra path "' + linkedRoot + '" is a symlink root'),
       ]);
-      expect(inspection.issues.at(-1)).toContain("configure its canonical absolute directory");
+      expect(inspection.issues.at(-1)).toContain("configure its resolved absolute directory");
     },
   );
 

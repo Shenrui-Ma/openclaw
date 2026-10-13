@@ -5,6 +5,7 @@ import {
   captureExternalSessionCommitGuard,
   composeSessionSourceAssertion,
 } from "../config/sessions/session-source-authority.js";
+import { runWithoutOwnedSessionTranscriptWrites } from "../config/sessions/transcript-write-context.js";
 import { isGatewayWorkerApprovalMethod } from "../infra/approval-gateway-runtime-methods.js";
 import { getPluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.js";
 import type { PluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.types.js";
@@ -110,7 +111,7 @@ export async function prepareInProcessAgentExecution(input: PrepareInProcessAgen
           import("./server-methods.js"),
         ]);
       assertLifetime();
-      const { error } = await authorizeGatewayRequestPreDispatch({
+      const authorization = await authorizeGatewayRequestPreDispatch({
         method: "agent",
         requestParams: { agentId: params.agentId },
         client,
@@ -118,9 +119,11 @@ export async function prepareInProcessAgentExecution(input: PrepareInProcessAgen
         methodRegistry:
           resolved.context.getGatewayMethodRegistry?.() ?? createRequestGatewayMethodRegistry(),
       });
+      authorization.sessionMutationAuthorization?.release?.();
+      authorization.sessionAccessAuthority?.release();
       assertLifetime();
-      if (error) {
-        unwrapGatewayMethodDispatchResponse("agent", { ok: false, error });
+      if (authorization.error) {
+        unwrapGatewayMethodDispatchResponse("agent", { ok: false, error: authorization.error });
       }
       operatorSource ??= await captureGatewayOperatorRunAuthority({
         client,
@@ -169,10 +172,12 @@ async function withInProcessGatewayDispatch<T>(
         );
       }
     }
-    // A launched agent is autonomous; retaining tool-call AsyncLocalStorage would
-    // leak the human authority into later model-selected work after closure.
-    return method === "agent" && readOperatorToolGatewayAuthority()
-      ? await runOutsideOperatorToolGatewayAuthority(() => run(resolved))
+    // Autonomous turns establish their own transcript writer and must not retain
+    // the caller's tool authority after that invocation closes.
+    return method === "agent"
+      ? await runWithoutOwnedSessionTranscriptWrites(() =>
+          runOutsideOperatorToolGatewayAuthority(() => run(resolved)),
+        )
       : await run(resolved);
   } finally {
     releaseOperatorAuthority?.();
@@ -239,6 +244,7 @@ export function withInProcessGatewayRead<T>(
         assertCurrent();
         return await run(resolved, assertCurrent);
       } finally {
+        authorization.sessionMutationAuthorization?.release?.();
         authorization.sessionAccessAuthority?.release();
       }
     },
@@ -302,6 +308,7 @@ export async function runWithInProcessGatewaySessionMutation<T>(
         assertCurrent();
         return await run(assertCurrent);
       } finally {
+        authorization.sessionMutationAuthorization?.release?.();
         authorization.sessionAccessAuthority?.release();
       }
     },

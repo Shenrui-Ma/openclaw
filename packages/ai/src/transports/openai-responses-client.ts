@@ -89,6 +89,7 @@ import {
   createOpenAIProviderAcceptanceHook,
   log,
   resolveOpenAIClientBaseUrl,
+  withOpenAIErrorResponseHook,
 } from "./openai-transport-shared.js";
 import {
   filterProviderTurnHeadersForExplicitOpencodeSession,
@@ -232,13 +233,17 @@ function createResponsesTransportExecutor(config: ResponsesTransportExecutorOpti
           options?.sessionId,
           options?.cacheRetention,
         );
-        const fetchOverride = createResponsesRequestFetch(model, {
-          compact: compactRequest?.mode === "endpoint",
-          stream: config.streamRequest,
-          lifecycle: requestLifecycle,
-          // The SDK replaces the fetch signal; retain the watchdog caller signal.
-          onSseComment: () => notifyLlmRequestActivity(options?.signal, false),
-        });
+        const fetchOverride = withOpenAIErrorResponseHook(
+          createResponsesRequestFetch(model, {
+            compact: compactRequest?.mode === "endpoint",
+            stream: config.streamRequest,
+            lifecycle: requestLifecycle,
+            // The SDK replaces the fetch signal; retain the watchdog caller signal.
+            onSseComment: () => notifyLlmRequestActivity(options?.signal, false),
+          }) ?? buildGuardedModelFetch(model),
+          options?.onResponse,
+          model,
+        );
         const client = config.createClient(model, apiKey, httpHeaders, fetchOverride);
         const nativeAstra =
           model.id === "gpt-6-astra" && supportsNativeOpenAIResponsesEndpoint(model);
@@ -323,6 +328,7 @@ function createResponsesTransportExecutor(config: ResponsesTransportExecutorOpti
           output.usage.input = compacted.usage.input_tokens;
           output.usage.output = compacted.usage.output_tokens;
           output.usage.totalTokens = compacted.usage.input_tokens + compacted.usage.output_tokens;
+          output.usage.usageReport = { state: "available" };
           compactRequest.resolve(compacted);
           finalizeTransportStream({ stream, output, signal: options?.signal });
           return;

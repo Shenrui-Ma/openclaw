@@ -8,6 +8,7 @@ import {
 import type { ApplicationContext } from "../../app/context.ts";
 import { hasOperatorAdminAccess } from "../../app/operator-access.ts";
 import { showConfirmDialog } from "../../components/confirm-dialog.ts";
+import { registryFor } from "../../components/overlay-registry.ts";
 import { formatUiError } from "../../lib/format-error.ts";
 import { canCallGatewayMethod } from "../../lib/gateway-methods.ts";
 import { isComposingKeyboardEvent } from "../../lib/ime.ts";
@@ -27,6 +28,7 @@ import { installedPluginDetailTabFromHash, type InstalledPluginDetailTab } from 
 import { PluginDiscoveryController } from "./plugin-discovery-controller.ts";
 import { PluginHelpController } from "./plugin-help-controller.ts";
 import { PluginMcpLoginController } from "./plugin-mcp-login-controller.ts";
+import { focusHeadingAfterRemoval } from "./plugin-removal-focus.ts";
 import { pluginRowKey, type PluginRowMessage } from "./plugin-row-message.tsx";
 import { PluginSettingsController } from "./plugin-settings-controller.ts";
 import { pluginMutationWarnings, PluginsConsentController } from "./plugins-consent-controller.ts";
@@ -269,12 +271,12 @@ export class PluginsPageController implements ReactiveControllerHost {
   }
 
   private readonly handleDocumentKeydown = (event: KeyboardEvent) => {
-    // WebAwesome dismisses its open dropdown at document bubble. Let that
-    // owner close the menu and restore focus before this page handles Escape.
+    // Overlay owners handle Escape after document capture and restore focus.
     if (
       event.key !== "Escape" ||
       isComposingKeyboardEvent(event) ||
       document.querySelector(".shell-nav[aria-modal='true']") ||
+      registryFor(document).stack.at(-1)?.open ||
       (event.target instanceof Element && event.target.closest("wa-dropdown[open]"))
     ) {
       return;
@@ -668,6 +670,7 @@ export class PluginsPageController implements ReactiveControllerHost {
   async uninstall(pluginId: string, rowKey: string): Promise<void> {
     const name =
       this.state.result?.plugins.find((plugin) => plugin.id === pluginId)?.name ?? pluginId;
+    const trigger = this.element.contains(document.activeElement) ? document.activeElement : null;
     await this.consentController.runMutation(
       rowKey,
       (client) => uninstallPlugin(client, pluginId),
@@ -686,6 +689,10 @@ export class PluginsPageController implements ReactiveControllerHost {
           }
         }
         await this.refreshCatalog(client);
+        if (isLatest()) {
+          await this.updateComplete;
+          focusHeadingAfterRemoval(this.element, trigger);
+        }
       },
       {
         action: "uninstall",
