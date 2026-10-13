@@ -16,6 +16,7 @@ import { markInboundContextLabel } from "../../auto-reply/reply/inbound-context-
 import type { ChannelOutboundAdapter } from "../../channels/plugins/types.public.js";
 import type { CliDeps } from "../../cli/outbound-send-deps.js";
 import type { OpenClawConfig } from "../../config/config.js";
+import { clearRuntimeConfigSnapshot, setRuntimeConfigSnapshot } from "../../config/io.js";
 import * as configSessions from "../../config/sessions.js";
 import type { InternalSessionEntry as SessionEntry } from "../../config/sessions.js";
 import * as sessionAccessor from "../../config/sessions/session-accessor.js";
@@ -36,9 +37,11 @@ import {
   rotateAgentEventLifecycleGeneration,
 } from "../../infra/agent-events.js";
 import { registerAgentRunContext } from "../../infra/agent-run-registry.js";
-import { loadDeliveryQueueEntry } from "../../infra/delivery-queue-sqlite.js";
 import { completeDeliveryQueueEntryInDatabase } from "../../infra/delivery-queue-sqlite.kernel.js";
-import { seedDeliveryQueueEntry } from "../../infra/delivery-queue-sqlite.test-support.js";
+import {
+  loadDeliveryQueueEntry,
+  seedDeliveryQueueEntry,
+} from "../../infra/delivery-queue-sqlite.test-support.js";
 import { OUTBOUND_DELIVERY_QUEUE_NAME } from "../../infra/outbound/delivery-queue-media-staging.js";
 import type { QueuedDelivery } from "../../infra/outbound/delivery-queue-types.js";
 import { createUnmodifiedPreparedOutboundBatch } from "../../infra/outbound/prepared-batch.js";
@@ -67,10 +70,6 @@ import {
   runExclusiveSessionLifecycleMutation,
 } from "../../sessions/session-lifecycle-admission.js";
 import {
-  beginAgentDeletionJournal,
-  removeAgentDeletionJournal,
-} from "../../state/agent-deletion-journal.js";
-import {
   closeOpenClawAgentDatabasesForTest,
   openOpenClawAgentDatabase,
 } from "../../state/openclaw-agent-db.js";
@@ -78,6 +77,10 @@ import {
   closeOpenClawStateDatabaseForTest,
   openOpenClawStateDatabase,
 } from "../../state/openclaw-state-db.js";
+import {
+  beginAgentDeletionJournal,
+  removeAgentDeletionJournal,
+} from "../../test-utils/agent-deletion-journal.js";
 import { createOutboundTestPlugin, createTestRegistry } from "../../test-utils/channel-plugins.js";
 import { withEnvAsync } from "../../test-utils/env.js";
 import { cleanupSessionStateForTest } from "../../test-utils/session-state-cleanup.js";
@@ -121,6 +124,7 @@ import {
   mainSessionEntry,
   makePendingFinalDelivery,
   readStore,
+  runningSessionEntry,
 } from "./main-session-restart-recovery-fixture.test-support.js";
 import { discoverRestartRecoveryStoreTargets } from "./main-session-restart-recovery-shared.js";
 import { recoverStore } from "./main-session-restart-recovery-store.js";
@@ -251,6 +255,7 @@ beforeEach(async () => {
   resetGatewayWorkAdmission();
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-main-restart-recovery-"));
   freshTmpDir = tmpDir;
+  setRuntimeConfigSnapshot({});
 });
 
 afterEach(async () => {
@@ -262,17 +267,9 @@ afterEach(async () => {
   } finally {
     await cleanupSessionStateForTest({ stateDir: tmpDir });
     await fs.rm(tmpDir, { recursive: true, force: true });
+    clearRuntimeConfigSnapshot();
   }
 });
-
-function runningSessionEntry(sessionId: string, overrides: SessionEntryFixture = {}): SessionEntry {
-  return createSessionEntry({
-    sessionId,
-    updatedAt: Date.now() - 10_000,
-    restartRecoveryDeliveryRunId: `${sessionId}-run`,
-    ...overrides,
-  });
-}
 
 function activeRestartRun(
   sessionKey = "agent:main:main",
@@ -1422,10 +1419,9 @@ describe("main-session-restart-recovery", () => {
     });
   });
 
-  it("keeps recovered Telegram notice authority current after a transport failure", async () => {
+  it("releases recovered Telegram notice authority after a transport failure", async () => {
     const sessionsDir = await makeSessionsDir();
     const sessionKey = "agent:main:telegram:group:-100123:topic:99";
-    const storePath = path.join(sessionsDir, "sessions.json");
     await writeMainSession({
       sessionsDir,
       sessionKey,
@@ -1437,8 +1433,13 @@ describe("main-session-restart-recovery", () => {
       },
     });
     await writeCompletedToolTranscript(sessionsDir);
-    sendRecoveryNotice.mockRejectedValueOnce(new Error("temporary transport failure"));
+    let currentAtSend: boolean | undefined;
+    sendRecoveryNotice.mockImplementationOnce(async (notice) => {
+      currentAtSend = notice.isCurrent?.({});
+      throw new Error("temporary transport failure");
+    });
     await expectRecovery({ started: 1, settled: 0, failed: 0, skipped: 0 });
+    expect(currentAtSend).toBe(true);
     expect(sendRecoveryNotice).toHaveBeenCalledOnce();
     const notice = sendRecoveryNotice.mock.calls[0]?.[0];
     expect(notice).toMatchObject({
@@ -1449,23 +1450,8 @@ describe("main-session-restart-recovery", () => {
       text: "I'm continuing your interrupted request now (the gateway has just restarted).  Don't be concerned with the lack of typing; I am working behind the scenes and I'll send a message when I'm done!",
       idempotencyKey: `main-session-restart-recovery:${String(gatewayParams().idempotencyKey)}:resumed-notice`,
     });
-    expect(notice?.isCurrent?.({})).toBe(true);
-    const current = loadSessionEntry({ sessionKey, storePath });
-    if (!current) {
-      throw new Error("expected recovered session");
-    }
-    await writeStore(sessionsDir, {
-      [sessionKey]: { ...current, abortedLastRun: true },
-    });
     expect(notice?.isCurrent?.({})).toBe(false);
-    await writeStore(sessionsDir, {
-      [sessionKey]: { ...current, sessionId: "replacement-session" },
-    });
-    expect(notice?.isCurrent?.({})).toBe(false);
-    await writeStore(sessionsDir, { [sessionKey]: current });
-    expect(notice?.isCurrent?.({})).toBe(true);
     dispatchSettlement.resolve();
-    await waitForFast(() => expect(notice?.isCurrent?.({})).toBe(false));
   });
 
   it("re-adopts a persisted Telegram private-topic route and releases the next turn", async () => {
@@ -4381,7 +4367,7 @@ describe("main-session-restart-recovery", () => {
         createAssistantToolCallMessage([
           { type: "toolCall", id: "call-bash-1", name: "bash", arguments: { command: "true" } },
         ]),
-        makeToolResultMessage("native tool call had no matching result", {
+        makeToolResultMessage("aborted", {
           toolName: "bash",
           toolCallId: "call-bash-1",
           details: { reason: "missing_tool_result" },
@@ -4389,7 +4375,13 @@ describe("main-session-restart-recovery", () => {
         }),
       ],
       safeTools: "required",
-      promptIncludes: ["unknown outcome", "never claim completion or success"],
+      promptIncludes: [
+        "interrupted by a gateway restart",
+        "marked interrupted, missing, or aborted",
+        "unknown outcome",
+        "not proof of tool failure",
+        "never claim completion or success",
+      ],
     },
     {
       name: "keeps a dangling side-effecting call in an aborted tail restricted",

@@ -40,7 +40,7 @@ import { readSessionGroupCategoryKeys } from "./session-group-categories.read.js
 import type { IncognitoSideDataOperations } from "./session-incognito-side-data-contract.js";
 import { readSessionMembershipRowsInDatabase } from "./session-membership-facts.js";
 import { listSessionReactionsInDatabase } from "./session-reaction-store.read.js";
-import { listSessionMembersInDatabase } from "./session-sharing-store.kernel.js";
+import { readSessionMembersInDatabase } from "./session-sharing-store.kernel.js";
 import type { SessionSharingWorkerOperations } from "./session-sharing-store.types.js";
 import { listSessionSuggestionsInDatabase } from "./session-suggestion-store.kernel.js";
 
@@ -60,6 +60,9 @@ export function createIncognitoSideDataWorker(
   let keys: string[] = [];
   let appendTrajectory:
     | typeof import("../../trajectory/runtime-store.sqlite.js").appendSqliteTrajectoryRuntimeEventsWithWriter
+    | undefined;
+  let readTrajectory:
+    | typeof import("../../trajectory/runtime-store.sqlite.js").loadSqliteTrajectoryRuntimeEventRowsSync
     | undefined;
   let trajectoryRetention:
     | typeof import("../../trajectory/runtime-retention.sqlite.js")
@@ -101,6 +104,10 @@ export function createIncognitoSideDataWorker(
   };
   return {
     async prepare(command: Command) {
+      if (command.type === "session.trajectory.read") {
+        readTrajectory ??= (await import("../../trajectory/runtime-store.sqlite.js"))
+          .loadSqliteTrajectoryRuntimeEventRowsSync;
+      }
       if (command.type === "session.trajectory.append") {
         appendTrajectory ??= (await import("../../trajectory/runtime-store.sqlite.js"))
           .appendSqliteTrajectoryRuntimeEventsWithWriter;
@@ -156,6 +163,19 @@ export function createIncognitoSideDataWorker(
         }
         return withSqlitePostCommitPublications(database.db, () => {
           switch (command.type) {
+            case "session.trajectory.read": {
+              if (!readTrajectory) {
+                throw new Error("Incognito trajectory read was not prepared");
+              }
+              return result(
+                readTrajectory({
+                  ...command.input,
+                  agentId: database.agentId,
+                  storePath: database.path,
+                  env,
+                }).map((row) => row.event),
+              );
+            }
             case "session.trajectory.retention.prepare": {
               if (!trajectoryRetention) {
                 throw new Error("Trajectory retention was not prepared");
@@ -359,7 +379,7 @@ export function createIncognitoSideDataWorker(
             case "session.category.keys":
               return result(readSessionGroupCategoryKeys(database, command.input.name));
             case "session.members.read":
-              return result(listSessionMembersInDatabase(database, command.input.sessionKey));
+              return result(readSessionMembersInDatabase(database, command.input.sessionKey));
             case "session.suggestions.read":
               return result(
                 listSessionSuggestionsInDatabase(

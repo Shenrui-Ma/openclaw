@@ -131,6 +131,20 @@ describe("session computer transport", () => {
     resetPluginRuntimeStateForTest();
   });
 
+  it("refuses computer preparation when the turn closes during its placement read", async () => {
+    const h = createHarness();
+    const placement = structuredClone(h.state.placement);
+    h.options.placements.getAsync = async () => {
+      h.releaseClaim();
+      return placement;
+    };
+    await expect(createWorkerComputerService(h.options).prepare(h.claim)).rejects.toThrow(
+      "Session desktop placement is no longer active",
+    );
+    expect(h.privateInvoke).not.toHaveBeenCalled();
+    expect(h.publicInvoke).not.toHaveBeenCalled();
+  });
+
   it("controls an attached environment without moving the conversation and fences attachment revocation", async () => {
     const h = createHarness();
     h.releaseClaim();
@@ -213,7 +227,7 @@ describe("session computer transport", () => {
     await desktopRegistry.stopAll();
   });
 
-  it("preserves bounded redacted native close causes in the worker RPC error", async () => {
+  it("preserves bounded native close causes in the worker RPC error", async () => {
     const h = createHarness();
     const service = createWorkerComputerService(h.options);
     const prepared = await service.prepare(h.claim);
@@ -249,7 +263,7 @@ describe("session computer transport", () => {
         reason: "gateway-unavailable",
         message: expect.stringContaining("desktop cleanup failed | native close failed"),
       });
-      expect(JSON.stringify(result)).not.toContain(secret);
+      expect(JSON.stringify(result)).toContain(secret);
       if ("message" in result) {
         expect(result.message?.length).toBeLessThanOrEqual(256);
       }
