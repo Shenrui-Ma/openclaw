@@ -589,15 +589,7 @@ function convertResponsesMessagesWithStyle(
         : (mediaPlaceholder ?? "(no output)");
       if (hasImages && model.input.includes("image")) {
         const parts: ResponseFunctionCallOutputItemList = [];
-        const hasExplicitText = msg.content.some(
-          (item) => item.type === "text" && extractToolResultBlockText(item),
-        );
-        if (hasText && !hasExplicitText) {
-          parts.push({ type: "input_text", text: textResult });
-        } else if (!hasText && mediaPlaceholder === "(see attached media)") {
-          parts.push({ type: "input_text", text: mediaPlaceholder });
-        }
-        let textSeparator = "";
+        let hasExplicitText = false;
         for (const item of msg.content) {
           if (isImageWithMediaPayload(item)) {
             parts.push({
@@ -608,9 +600,8 @@ function convertResponsesMessagesWithStyle(
           } else if (hasText && item.type === "text") {
             const text = extractToolResultBlockText(item);
             if (text) {
-              // Preserve text joining for compatibility routes that flatten these parts.
-              const joinedText = `${textSeparator}${text}`;
-              textSeparator = "\n";
+              const joinedText = `${hasExplicitText ? "\n" : ""}${text}`;
+              hasExplicitText = true;
               const previous = parts.at(-1);
               if (previous?.type === "input_text") {
                 previous.text += joinedText;
@@ -619,6 +610,11 @@ function convertResponsesMessagesWithStyle(
               }
             }
           }
+        }
+        if (hasText && !hasExplicitText) {
+          parts.unshift({ type: "input_text", text: textResult });
+        } else if (!hasText && mediaPlaceholder === "(see attached media)") {
+          parts.unshift({ type: "input_text", text: mediaPlaceholder });
         }
         output = parts;
       }
