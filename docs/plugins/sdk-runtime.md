@@ -332,6 +332,13 @@ temporary changes. The connection owner retains the current timeout, skips
 unchanged assignments, and discards it on close; raw timeout PRAGMAs on an owned
 connection would bypass that policy.
 
+Worker kernels that write derived data without changing any session facts wrap
+their synchronous DML in `withSqliteDatabaseWriteScope(db, [], write)` from the
+same subpath. This preserves resident session caches while the database-wide
+write receipt still advances. Only certify the kernel's own writes; keep user
+callbacks and authority admission outside the scope. Schema changes continue to
+invalidate all scopes.
+
 Engine-aware stores keep host secret resolution and operation settlement in
 `openclaw/plugin-sdk/database-engine-runtime`, and physical opens and transaction
 recipes in the worker/admission-only
@@ -431,7 +438,7 @@ retryable. Omitting the option leaves the generated status source unchanged.
 The existing `openclaw/plugin-sdk/meeting-runtime` entry point exposes optional
 participation methods on `MeetingSessionRuntime`. Supply its `participation`
 options with an SQLite plugin keyed store, current capabilities, action
-validation, and a provider executor. Providers observe canonical source identity,
+validation, and a provider executor. Providers observe resolved source identity,
 epoch, revision, and finality through `observeParticipationSource`; never accept
 these fields from model arguments. `inspectParticipationSource` returns a
 snapshot and a live guard for work that crosses asynchronous boundaries.
@@ -580,6 +587,46 @@ Choice, ordered Score, and Boolean-probability batches. Retained handles reject
 after consumer retirement. See [decision models](/plugins/sdk-overview/capabilities#decision-models-contract-version-1)
 for provider selection, lifecycle, failure handling, limits, and diagnostics.
 
+## Setup secret egress
+
+The private official-plugin entrypoint `openclaw/plugin-sdk/secret-egress-runtime`
+exports `withSetupSecretEgress(options, run)` alongside `withConfiguredModelEgress`.
+Both use the same worker-owned, revocable job grant lifecycle. Setup options
+require a job-owned `AbortSignal` and an explicit map of environment names to
+shared-store SecretRefs:
+
+```ts
+const { withSetupSecretEgress } = await import("openclaw/plugin-sdk/secret-egress-runtime");
+await withSetupSecretEgress(
+  {
+    signal: job.signal,
+    secrets: {
+      REGISTRY_TOKEN: { source: "store", provider: "default", id: "REGISTRY_TOKEN" },
+    },
+  },
+  async ({ remoteEnv, caBundle, hostEnv, revoke }) => {
+    await bridge.run({ remoteEnv, caBundle, hostEnv, revoke });
+  },
+);
+```
+
+The host bridge must keep `hostEnv` on the credential-owning host. It contains
+authenticated upstream proxy URLs and local CA paths. Only `remoteEnv` (sealed
+sentinels) and `caBundle` (public trust contents) may cross to the remote job;
+the bridge installs remote proxy and CA settings itself. Store values and their
+allowed hosts are selected together through the shared-state read worker, and
+only selected protected secrets are registered. Missing and agent-readable
+entries fail before the callback runs.
+
+Register process termination listeners inside the callback, after the grant's
+revocation listener is installed. Abort the job signal before termination, or
+call `revoke()` synchronously first. Retained credentials stop authorizing egress
+after cancellation, explicit revocation, callback settlement, or worker failure.
+The callback must join its process and bridge cleanup before returning. The
+helper then stops the worker and removes temporary CA files; it does not manage
+remote processes itself. This capability adds no profile keys or stored-data
+migration.
+
 <a id="api-runtime-tasks" />
 
 The former Tasks runtime is no longer available. See [removed Tasks and TaskFlow APIs](/plugins/sdk-migration/removed-surfaces#tasks-and-taskflow-apis-removed) for native-owner alternatives.
@@ -593,3 +640,9 @@ Revalidate each caller before delivering any result.
 `allowStale: false` waits for freshness; `refresh: true` replaces an older load.
 `clear()` retires pending cache publications. Cache keys must include the owning
 identity or revision; the cache never provides authorization.
+
+`createStaleWhileRevalidateCache` from `openclaw/plugin-sdk/collection-runtime`
+passes the previous successful value (or `undefined`) to its load callback,
+including explicit refreshes. Keep HTTP validators with that value so eviction,
+clear, and failed refreshes retire the representation and its validators together.
+The loader must treat the previous value as immutable.

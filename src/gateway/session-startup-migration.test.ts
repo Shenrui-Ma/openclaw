@@ -5,6 +5,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { runDoctorSessionSqlite } from "../commands/doctor-session-sqlite.js";
 import {
+  clearRuntimeConfigSnapshot,
+  setRuntimeConfigSnapshot,
+} from "../config/runtime-snapshot.js";
+import {
   loadExactSessionEntry,
   loadExactSessionEntryReadOnly,
   persistSessionTranscriptTurn,
@@ -54,6 +58,7 @@ afterEach(async () => {
   closeOpenClawAgentDatabasesForTest();
   await closeOpenClawStateDatabaseAsync();
   closeOpenClawStateDatabaseForTest();
+  clearRuntimeConfigSnapshot();
   tempDirs.cleanup();
 });
 
@@ -284,6 +289,7 @@ describe("runStartupSessionMaintenanceForTest", () => {
           },
           ...(storePath ? { session: { store: storePath } } : {}),
         };
+        setRuntimeConfigSnapshot(cfg);
         const scope = {
           agentId,
           defaultAgentId: "main",
@@ -348,19 +354,17 @@ describe("runStartupSessionMaintenanceForTest", () => {
           ),
         ).toBe(true);
         expect(loadExactSessionEntry(scope)?.entry.sessionId).toBe(scope.sessionId);
-        if (layout === "default") {
-          const history = await readSessionMessagesPageWithStatsAsync(scope, {
-            maxMessages: 10,
-            offset: 0,
-          });
-          expect(history.messages).toEqual([
-            expect.objectContaining({ role: "user", content: "retained history" }),
-          ]);
-        }
         await runGatewaySessionStartupMaintenance({ databases, log });
 
         const reopened = openOpenClawAgentDatabase(options);
         expect(sessionTranscriptIndexNeedsReconcile(reopened.db, scope.sessionId)).toBe(false);
+        const history = await readSessionMessagesPageWithStatsAsync(scope, {
+          maxMessages: 10,
+          offset: 0,
+        });
+        expect(history.messages).toEqual([
+          expect.objectContaining({ role: "user", content: "retained history" }),
+        ]);
         expect(loadExactSessionEntry(scope)?.entry.sessionId).toBe(scope.sessionId);
         expect(log.warn).not.toHaveBeenCalled();
         if (layout !== "default") {
