@@ -52,6 +52,17 @@ the same `event_id` is rejected durably for the tombstone retention window.
 See [Channel outbound API](/plugins/sdk-channel-outbound#durable-ingress-monitors)
 for the monitor API and shutdown contract.
 
+Agent database preparation does not delay durable intake into shared state.
+The monitor bounds active starts to `drain.startLimit` (32 by default),
+leaving additional messages in the durable queue while an agent is preparing.
+Drains that release lanes on deferral may lend up to that many additional slots
+while the deferred callbacks settle.
+Preparation waits report `agent-database-preparation-pending` at the record stage
+and log the affected agent and channel. Dispatch still waits for that agent's
+integrity and preparation checks. This bounds active in-memory work; disk backlog
+retention remains owned by the transport's existing retention policy, and pending
+messages are not discarded to enforce the active limit.
+
 The dispatch lifecycle optionally exposes
 `readLaneBacklog(): Promise<readonly ChannelIngressQueueRecord<unknown, unknown>[]>`.
 It reads same-lane durable rows that have not yet been handed off, excluding the
@@ -78,11 +89,12 @@ channel-local TTL cache.
 
 Persistent replay guards await SQLite reads, comparisons, writes, and legacy-file
 migration in the shared state worker. Competing records are compared again in the
-write transaction; clearing memory or forgetting a key fences older asynchronous
-cache fills. Await commits and deletions before acknowledging adoption or finishing
-cleanup. Error hooks retain their existing policy: a throwing hook rejects the
-operation, while a nonthrowing hook permits the guard's memory fallback. Worker
-failures never switch persistence to synchronous SQLite. Multi-key commits and
+write transaction. Forgetting a key clears its memory entry in the same queue as
+its durable deletion. Memory-only clears are best effort: an in-flight read may
+refill the cache afterward. Await commits and deletions before acknowledging
+adoption or finishing cleanup. Error hooks retain their existing policy: a throwing
+hook rejects the operation, while a nonthrowing hook permits the guard's memory
+fallback. Worker failures never switch persistence to synchronous SQLite. Multi-key commits and
 deletions settle every accepted write before returning an error, so rollback and
 shutdown cannot race a still-running sibling mutation.
 

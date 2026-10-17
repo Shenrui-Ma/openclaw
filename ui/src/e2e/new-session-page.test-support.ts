@@ -43,10 +43,10 @@ export function installMockGateway(
 // The scale-in animation moves inventory rows after they first become visible.
 // Wait for its public completion event before hovering a nested details card.
 export async function openEnvironmentPicker(page: Page) {
-  const afterShow = page.locator("wa-popover.new-session-page__where-popover").evaluate(
+  const afterShow = page.locator(".oc-popover.new-session-page__where-popover").evaluate(
     (element) =>
       new Promise<void>((resolve) => {
-        element.addEventListener("wa-after-show", () => resolve(), { once: true });
+        element.addEventListener("overlay-after-show", () => resolve(), { once: true });
       }),
   );
   await page.locator("#new-session-where-trigger").click();
@@ -438,14 +438,6 @@ export async function waitForGatewayRecoveryScope(page: Page, ready = true) {
 
 export async function replaceGatewayClient(page: Page) {
   await evaluateControlUiContext(page, (context) => context.gateway.connect());
-}
-
-export async function openNewSessionPlusMenu(page: Page) {
-  const composer = page.locator(".new-session-page__composer");
-  const menu = composer.locator("wa-dropdown.agent-chat__capability-menu");
-  await composer.getByRole("button", { name: "Add attachment" }).click();
-  await expect.poll(() => menu.getAttribute("data-view")).toBe("root");
-  return menu;
 }
 
 export async function navigateInApp(

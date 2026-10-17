@@ -1,6 +1,6 @@
-import type { DatabaseSync } from "node:sqlite";
 import type { ExpressionBuilder } from "kysely";
 import { executeSqliteQuerySync, getNodeSqliteKysely } from "../../infra/kysely-sync.js";
+import type { EngineConnection } from "../../infra/sql-connection.js";
 import { sessionChanges } from "../../sessions/session-row-changes.js";
 import type { DB as StateDatabase } from "../../state/openclaw-state-db.generated.js";
 import {
@@ -41,7 +41,7 @@ import {
   serializeWorkerWorkspaceReconciliationPlan,
 } from "./workspace-reconcile.js";
 
-const workspaceJournalQuery = (db: DatabaseSync) =>
+const workspaceJournalQuery = (db: EngineConnection) =>
   getNodeSqliteKysely<Pick<StateDatabase, "worker_workspace_reconciliations">>(db);
 
 export class ActiveTurnClaimError extends Error {
@@ -51,7 +51,7 @@ export class ActiveTurnClaimError extends Error {
   }
 }
 
-function releaseTurnQuery(db: DatabaseSync, nowMs: number) {
+function releaseTurnQuery(db: EngineConnection, nowMs: number) {
   return query(db)
     .updateTable("worker_session_placements")
     .set({
@@ -61,7 +61,7 @@ function releaseTurnQuery(db: DatabaseSync, nowMs: number) {
 }
 
 export function clearLocalTurnClaimsInDatabase(
-  db: DatabaseSync,
+  db: EngineConnection,
   path: string,
   nowMs: number,
 ): WorkerSessionPlacementRecord[] {
@@ -79,18 +79,18 @@ export function clearLocalTurnClaimsInDatabase(
 export function createPlacementTurnClaimOps(runtime: PlacementStoreRuntime) {
   const { instanceId, path, now, write } = runtime;
   function publishTurnRelease(
-    db: DatabaseSync,
+    db: EngineConnection,
     claim: WorkerSessionTurnClaim,
     statement: ReturnType<typeof releaseTurnQuery>,
     error: string,
   ): WorkerSessionPlacementRecord;
   function publishTurnRelease(
-    db: DatabaseSync,
+    db: EngineConnection,
     claim: WorkerSessionTurnClaim,
     statement: ReturnType<typeof releaseTurnQuery>,
   ): WorkerSessionPlacementRecord | undefined;
   function publishTurnRelease(
-    db: DatabaseSync,
+    db: EngineConnection,
     claim: WorkerSessionTurnClaim,
     statement: ReturnType<typeof releaseTurnQuery>,
     error?: string,
@@ -109,7 +109,7 @@ export function createPlacementTurnClaimOps(runtime: PlacementStoreRuntime) {
     return updated;
   }
   const claimTurnInDatabase = (
-    db: DatabaseSync,
+    db: EngineConnection,
     input: WorkerTurnClaimInput,
     updatedAtMs: number,
     options: { allowDraining?: boolean } = {},
@@ -283,7 +283,7 @@ export function createPlacementTurnClaimOps(runtime: PlacementStoreRuntime) {
       return claim;
     });
 
-  const releaseTurnInDatabase = (db: DatabaseSync, claim: WorkerSessionTurnClaim) => {
+  const releaseTurnInDatabase = (db: EngineConnection, claim: WorkerSessionTurnClaim) => {
     const sessionId = required(claim.sessionId, "session id");
     const claimId = required(claim.claimId, "turn claim id");
     const runId = required(claim.runId, "turn claim run id");
@@ -390,9 +390,6 @@ export function createPlacementTurnClaimOps(runtime: PlacementStoreRuntime) {
       const claimId = required(claim.claimId, "turn claim id");
       const runId = required(claim.runId, "turn claim run id");
       return write((db) => {
-        if (!hasWorkerWorkspacePendingResult(db, sessionId)) {
-          throw new Error(`Session ${sessionId} has no pending cloud workspace result`);
-        }
         if (!hasAcceptedWorkerWorkspacePendingResult(db, sessionId)) {
           throw new Error(`Session ${sessionId} cloud workspace result was not accepted`);
         }
@@ -521,7 +518,7 @@ export function createPlacementTurnClaimOps(runtime: PlacementStoreRuntime) {
         ) {
           throw new Error(`Worker workspace journal owner is stale for session ${sessionId}`);
         }
-        const result = executeSqliteQuerySync(
+        const updatedRow = executeSqliteQuerySync(
           db,
           query(db)
             .updateTable("worker_session_placements")
@@ -542,9 +539,10 @@ export function createPlacementTurnClaimOps(runtime: PlacementStoreRuntime) {
                   },
                 ),
               ),
-            ),
-        );
-        if (result.numAffectedRows !== 1n) {
+            )
+            .returningAll(),
+        ).rows[0];
+        if (!updatedRow) {
           throw new Error(`Worker session workspace ${sessionId} changed during reconciliation`);
         }
         if (reconciliation) {
@@ -566,7 +564,7 @@ export function createPlacementTurnClaimOps(runtime: PlacementStoreRuntime) {
           }
           publishPlacementWorkspaceJournalState(db, sessionId, true);
         }
-        const updated = getRequired(db, sessionId);
+        const updated = fromRow(updatedRow);
         publishPlacementTurnClaimState(db, updated, current.state);
         sessionChanges.emit({ agentId: current.agentId, sessionKey: current.sessionKey }, db);
         return updated;

@@ -149,6 +149,8 @@ CREATE TABLE IF NOT EXISTS session_windows (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   transcript_updated_at INTEGER DEFAULT NULL,
+  row_transcript_json TEXT,
+  row_transcript_updated_at INTEGER,
   transcript_observed_at INTEGER DEFAULT NULL,
   session_entry_provenance INTEGER NOT NULL DEFAULT 0 CHECK (session_entry_provenance IN (0, 1)),
   acp_owned INTEGER NOT NULL DEFAULT 0 CHECK (acp_owned IN (0, 1)),
@@ -181,7 +183,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_windows_created_at
   ON session_windows(created_at DESC, session_id);
 
 CREATE INDEX IF NOT EXISTS idx_agent_session_windows_conversation
-  ON session_windows(primary_conversation_id, updated_at DESC, session_id)
+  ON session_windows(primary_conversation_id)
   WHERE primary_conversation_id IS NOT NULL;
 
 -- Offline imports and repairs queue explicit work; admission also settles keys
@@ -581,15 +583,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_transcript_message_idempotency
 CREATE INDEX IF NOT EXISTS idx_agent_transcript_event_identity_sequence
   ON transcript_event_identities(session_id, seq);
 
-CREATE INDEX IF NOT EXISTS idx_agent_transcript_event_parent
-  ON transcript_event_identities(session_id, parent_id)
-  WHERE parent_id IS NOT NULL;
-
 CREATE INDEX IF NOT EXISTS idx_agent_transcript_event_sequence
   ON transcript_event_identities(session_id, event_type, seq DESC);
 
 CREATE TABLE IF NOT EXISTS context_engine_turn_outbox (
-  advancement_key TEXT NOT NULL PRIMARY KEY,
+  enqueue_sequence INTEGER PRIMARY KEY,
+  advancement_key TEXT NOT NULL UNIQUE,
   engine_id TEXT NOT NULL,
   owner_plugin_id TEXT,
   session_id TEXT NOT NULL,
@@ -698,7 +697,7 @@ CREATE TABLE IF NOT EXISTS memory_entry_origins (
   origin_class TEXT NOT NULL CHECK (origin_class IN ('owner', 'agent', 'untrusted', 'system')),
   observed_at INTEGER NOT NULL,
   PRIMARY KEY (entry_key, agent_id, session_id)
-) STRICT;
+) STRICT, WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS memory_session_tombstones (
   session_id TEXT NOT NULL PRIMARY KEY,
