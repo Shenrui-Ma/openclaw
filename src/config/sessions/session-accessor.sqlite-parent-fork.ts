@@ -288,11 +288,14 @@ export function resolveParentForkSourceTranscript(
 
 function findLastCompletedForkIndex(entries: readonly TranscriptEvent[]): number {
   return entries.findLastIndex((entry) => {
+    if (!isRecord(entry)) {
+      return false;
+    }
     // A reset is stable even before the next assistant response completes.
-    if (isRecord(entry) && entry.type === "reset") {
+    if (entry.type === "reset") {
       return true;
     }
-    const message = isRecord(entry) && isRecord(entry.message) ? entry.message : undefined;
+    const message = isRecord(entry.message) ? entry.message : undefined;
     // Tool-use assistant messages are mid-turn checkpoints. Any other persisted
     // assistant message is a stable boundary, including legacy rows without a reason.
     return message?.role === "assistant" && message.stopReason !== "toolUse";
