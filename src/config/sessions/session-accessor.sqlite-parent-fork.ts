@@ -288,7 +288,7 @@ export function resolveParentForkSourceTranscript(
 
 function findLastCompletedForkIndex(entries: readonly TranscriptEvent[]): number {
   return entries.findLastIndex((entry) => {
-    // Keep the reset's context boundary even when its first turn is still active.
+    // A reset is stable even before the next assistant response completes.
     if (isRecord(entry) && entry.type === "reset") {
       return true;
     }

@@ -85,11 +85,13 @@ function expectForkContext(
 }
 
 describe("last-completed parent forks", () => {
-  it("does not restore cleared context during the first turn after reset", () => {
+  it.each([false, true])("does not restore cleared context after reset (active=%s)", (active) => {
     const history = createHistory();
     history.turn("discarded");
     history.reset("clear");
-    history.turn("active", true);
+    if (active) {
+      history.turn("active", true);
+    }
 
     expectForkContext(history.events, []);
   });

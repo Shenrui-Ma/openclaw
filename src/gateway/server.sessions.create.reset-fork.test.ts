@@ -11,7 +11,7 @@ import { sessionStoreEntry, seedSessionTranscript } from "./test/server-sessions
 
 const { createSessionStoreDir, openClient } = setupSessionCreateTestHarness();
 
-test("sessions.create does not revive reset context when forking an active parent", async () => {
+test.each([false, true])("does not revive reset context in forks (active=%s)", async (active) => {
   const { storePath } = await createSessionStoreDir();
   testState.sessionConfig = { scope: "per-sender" };
   const parentSessionId = "sess-reset-fork-parent";
@@ -48,15 +48,19 @@ test("sessions.create does not revive reset context when forking an active paren
   });
   expect(reset.ok, JSON.stringify(reset.error)).toBe(true);
   expect(reset.payload?.entry.sessionId).toBe(parentSessionId);
-  const activeMessages = [
-    { role: "user", content: "new question" },
-    {
-      role: "assistant",
-      content: [{ type: "toolCall", id: "new-call", name: "lookup", arguments: {} }],
-      stopReason: "toolUse",
-    },
-  ];
-  await seedSessionTranscript({ ...parentScope, messages: activeMessages });
+  const activeMessages = active
+    ? [
+        { role: "user", content: "new question" },
+        {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "new-call", name: "lookup", arguments: {} }],
+          stopReason: "toolUse",
+        },
+      ]
+    : [];
+  if (active) {
+    await seedSessionTranscript({ ...parentScope, messages: activeMessages });
+  }
   const originalEvents = await loadTranscriptEvents(parentScope);
   expect(originalEvents).toContainEqual(expect.objectContaining({ type: "reset", reason: "new" }));
   const parent = await SessionManager.openModelContextAsync(parentScope);
@@ -64,7 +68,9 @@ test("sessions.create does not revive reset context when forking an active paren
   expect(parentMessages).toMatchObject(activeMessages);
 
   // The shared fixture simulates run liveness; reset, fork, and transcript reads stay real.
-  embeddedRunMock.activeIds.add(parentSessionId);
+  if (active) {
+    embeddedRunMock.activeIds.add(parentSessionId);
+  }
   const created = await rpcReq<{ key: string; sessionId: string }>(ws, "sessions.create", {
     key: childKey,
     parentSessionKey: parentKey,
